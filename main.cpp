@@ -5,6 +5,8 @@
 #include <future>
 #include <thread>
 #include <vector> 
+#include <cstdlib>
+#include <ctime>
 
 enum class OrderType {Market, Limit}; 
 enum class Side {Buy, Sell};
@@ -29,9 +31,11 @@ private:
     // Queues of orders at each price:
     std::map<double, std::queue<Order>> buyOrdersMap; 
     std::map<double, std::queue<Order>> sellOrdersMap;
+
     // Thread safety:
     mutable std::mutex buyOrdersMutex;
     mutable std::mutex sellOrdersMutex;
+
     // Holder for async tasks:
     std::vector<std::future<void>> matchOrdersFutures; 
 };
@@ -119,29 +123,87 @@ void OrderBook::waitForAllOrders() {
     matchOrdersFutures.clear(); 
 }
 
+// Random order generator:
+Order generateRandomOrder(int id) {
+    Order order;
+    order.id = id;
+    order.type = OrderType::Limit;
+    order.side = (rand() % 2 == 0) ? Side::Buy : Side::Sell;
+    order.price = 100.0 + static_cast<double>(rand() % 2000) /10.0;
+    order.quantity = rand() % 100 + 1;
+    return order;
+}
+
+// Terminal-based interactivity with the order engine
+void placeOrder(OrderBook& orderBook, int& nextOrderId) {
+    Order order;
+    order.id = nextOrderId++;
+    order.type = OrderType::Limit;
+
+    int side;
+    std::cout << "Enter side (0 for Buy, 1 for Sell): ";
+    std::cin >> side;
+    order.side = (side == 0) ? Side::Buy : Side::Sell;
+
+    std::cout << "Enter price: ";
+    std::cin >> order.price;
+
+    std::cout << "Enter quantity: ";
+    std::cin >> order.quantity;
+
+    orderBook.addOrder(order);
+}
+
+// Background random order generator - trigger:
+void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(15));
+        Order randomOrder = generateRandomOrder(nextOrderId++);
+        orderBook.addOrder(randomOrder);
+        std::cout << "\n Random Order Added: "
+                  << (randomOrder.side == Side::Buy ? "Buy" : "Sell")
+                  << " " << randomOrder.quantity << " @ " << randomOrder.price << "\n";
+    }
+}
+
 // Current (temporary) way of interacting with the engine -- FIXME
 int main() {
+    srand(static_cast<unsigned int>(time(0)));
     OrderBook orderBook;
+    int nextOrderId = 1;
 
-    std::cout << "Adding orders...\n";
-    orderBook.addOrder({1, OrderType::Limit, Side::Buy, 100.5, 10}); // Buy 10 @ 100.5
-    orderBook.addOrder({2, OrderType::Limit, Side::Sell, 100.5, 5});  // Sell 5 @ 100.5
-    orderBook.addOrder({3, OrderType::Limit, Side::Buy, 101.0, 15}); // Buy 15 @ 101.0
-    orderBook.addOrder({4, OrderType::Limit, Side::Sell, 100.0, 10}); // Sell 10 @ 100.0
+    // Start background thread for random order generation:
+    std::thread orderGenerator(generateOrdersPeriodically, std::ref(orderBook), std::ref(nextOrderId));
 
-    orderBook.waitForAllOrders();
+    int choice;
+    do {
+        std::cout << "\nMenu:\n";
+        std::cout << "1. Place Order\n";
+        std::cout << "2. Print Order Book\n";
+        std::cout << "3. Exit\n";
+        std::cout << "Enter your choice: ";
+        std::cin >> choice;
 
-    std::cout << "\nOrder book after adding orders:\n";
-    orderBook.printOrderBook();
+        switch (choice) {
+            case 1:
+                placeOrder(orderBook, nextOrderId);
+                break;
+            case 2:
+                orderBook.waitForAllOrders();
+                orderBook.printOrderBook();
+                break;
+            case 3:
+                std::cout << "Exiting...\n";
+                orderBook.waitForAllOrders();
+                break;
+            default:
+                std::cout << "Invalid choice, please try again.\n";
+                break;
+        }
+    } while (choice != 3);
 
-    std::cout << "\nAdding more orders...\n";
-    orderBook.addOrder({5, OrderType::Limit, Side::Sell, 101.0, 10}); // Sell 10 @ 101.0
-    orderBook.addOrder({6, OrderType::Limit, Side::Buy, 102.0, 20}); // Buy 20 @ 102.0
-
-    orderBook.waitForAllOrders();
-
-    std::cout << "\nOrder book after additional orders:\n";
-    orderBook.printOrderBook();
+    // Simplified order generator shut down:
+    orderGenerator.detach();
 
     return 0;
 }

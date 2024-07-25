@@ -1,7 +1,5 @@
 # OrderMatchingEngine
-Simple order matching engine in C++
+Order matching engine, concurrent processing & live market simulation in C++
 
 ## Current Planned Additional Features:
-- Interface for order addition
-- Interactivity/visualization of order matching
-- Visualization of market
+- Visualization of market & python-based user interface -- turn it into an entire application?

@@ -1,16 +1,20 @@
-#include <iostream> 
-#include <map> 
-#include <queue> 
+#include <iostream>
+#include <map>
+#include <queue>
 #include <mutex>
 #include <future>
 #include <thread>
-#include <vector> 
+#include <vector>
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
 #include <cstring>
-#include <arpa/inet.h>
-#include <unistd.h>
+#include <algorithm>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#pragma comment(lib, "Ws2_32.lib")
+
 
 
 enum class OrderType {Market, Limit}; 
@@ -53,7 +57,7 @@ void OrderBook::addOrder(const Order& order) {
     }
 
     // Parallel call to matchOrders: (non-blocking execution)
-    matchOrdersFutures.push_back(std::async(std::launch::async, [this]() { this->matchOrders(); }));
+    matchOrders();
 }
 
 void OrderBook::matchOrders() {
@@ -76,7 +80,7 @@ void OrderBook::matchOrders() {
             Order& currentSell = sellQueue.front();
 
             // Minimum overlapping quantity:
-            int matchedQuantity = std::min(currentBuy.quantity, currentSell.quantity);
+            int matchedQuantity = (currentBuy.quantity < currentSell.quantity) ? currentBuy.quantity : currentSell.quantity;
 
             std::cout << "Orders Matched: " << matchedQuantity << " @ " << bestSell->first << "\n";
 
@@ -168,79 +172,90 @@ void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
 }
 
 // CHange to act like a server:
-void HandleClient(Orderbook& orderBook, int clientSocket) {
+void handleClient(OrderBook& orderBook, SOCKET clientSocket) {
     int nextOrderId = 1;
     char buffer[256];
     while (true) {
         std::memset(buffer, 0, 256);
         int bytesReceived = recv(clientSocket, buffer, 255, 0);
-        if (bytesRecieved <= 0){
-            std::cout << "Client disconnected. \n";
+        if (bytesReceived <= 0) {
+            std::cout << "Client disconnected.\n";
             break;
         }
 
-        // Assume format is: <side> <price> <quantity>
         int side;
         double price;
-        sscanf(buffer, "%d %lf %d", &side, &price, &quantity); // feed in order
-        if (side.std::is_empty() || price.std::is_empty() || quantity.std::is_empty()){
-            std::string invalidOrder = "Invalid Order Format. Please Try Again.\n"; // failure message
-            send(clientSocket, invalidOrder.c_str(), invalidOrder.size(), 0);
-        }
+        int quantity;
+        sscanf(buffer, "%d %lf %d", &side, &price, &quantity);
 
-        Order order = { nextOrderId++, OrderType::Limit, side == 0 ? Side::Buy : Side::Sell};
+        Order order = { nextOrderId++, OrderType::Limit, side == 0 ? Side::Buy : Side::Sell, price, quantity };
         orderBook.addOrder(order);
 
-        std::string confirmation = "Order added: "+ std::string(buffer) + "\n"; // repeat order back
+        std::string confirmation = "Order added: " + std::string(buffer) + "\n";
         send(clientSocket, confirmation.c_str(), confirmation.size(), 0);
     }
-    close(clientSocket); // if broken out of
+    closesocket(clientSocket);
 }
 
-// server mgmt:
-void startServer(OrderBook& orderBook){
-    int serverSocket = socket(AD_INET, SOCK_STREAM, 0);
-    if (serverSocket == -1){
-        std::cerr << "Cannot create socket\n";
-        exit(EXIT_FAILURE);
+void startServer(OrderBook& orderBook) {
+    WSADATA wsaData;
+    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (iResult != 0) {
+        std::cerr << "WSAStartup failed: " << iResult << "\n";
+        return;
     }
+
+    SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (serverSocket == INVALID_SOCKET) {
+        std::cerr << "Cannot create socket, error: " << WSAGetLastError() << "\n";
+        WSACleanup();
+        return;
+    }
+
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(54000);
     serverAddr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) { // error handling
-        std::cerr << "Cannot bind socket\n";
-        close(serverSocekt);
-        exit(EXIT_FAILURE);
+    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        std::cerr << "Bind failed, error: " << WSAGetLastError() << "\n";
+        closesocket(serverSocket);
+        WSACleanup();
+        return;
+    }
+
+    if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
+        std::cerr << "Listen failed, error: " << WSAGetLastError() << "\n";
+        closesocket(serverSocket);
+        WSACleanup();
+        return;
     }
 
     std::cout << "Server started. Waiting for connections...\n";
 
     while (true) {
         sockaddr_in clientAddr;
-        socklen_t clientSize = sizeof(clientAddr);
-        int clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientSize);
-        if (clientSocket == -1) {
-            std::cerr << "Cannot accept connection\n";
+        int clientSize = sizeof(clientAddr);
+        SOCKET clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientSize);
+        if (clientSocket == INVALID_SOCKET) {
+            std::cerr << "Accept failed, error: " << WSAGetLastError() << "\n";
             continue;
         }
 
         std::cout << "Client connected.\n";
         std::thread(handleClient, std::ref(orderBook), clientSocket).detach();
     }
+
+    closesocket(serverSocket);
+    WSACleanup();
 }
 
-// Initial client-server setup:
 int main() {
     srand(static_cast<unsigned int>(time(0)));
     OrderBook orderBook;
     int nextOrderId = 1;
 
-    // Start background thread to generate random orders
     std::thread orderGenerator(generateOrdersPeriodically, std::ref(orderBook), std::ref(nextOrderId));
-
-    // Start server to handle client connections
     std::thread serverThread(startServer, std::ref(orderBook));
 
     orderGenerator.join();
@@ -248,9 +263,6 @@ int main() {
 
     return 0;
 }
-
-
-
 
 /*
 // Current (temporary) way of interacting with the engine -- FIXME

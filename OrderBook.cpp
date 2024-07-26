@@ -7,6 +7,11 @@
 #include <vector> 
 #include <cstdlib>
 #include <ctime>
+#include <chrono>
+#include <cstring>
+#include <arpa/inet.h>
+#include <unistd.h>
+
 
 enum class OrderType {Market, Limit}; 
 enum class Side {Buy, Sell};
@@ -31,11 +36,9 @@ private:
     // Queues of orders at each price:
     std::map<double, std::queue<Order>> buyOrdersMap; 
     std::map<double, std::queue<Order>> sellOrdersMap;
-
     // Thread safety:
     mutable std::mutex buyOrdersMutex;
     mutable std::mutex sellOrdersMutex;
-
     // Holder for async tasks:
     std::vector<std::future<void>> matchOrdersFutures; 
 };
@@ -123,7 +126,6 @@ void OrderBook::waitForAllOrders() {
     matchOrdersFutures.clear(); 
 }
 
-// Random order generator:
 Order generateRandomOrder(int id) {
     Order order;
     order.id = id;
@@ -133,8 +135,8 @@ Order generateRandomOrder(int id) {
     order.quantity = rand() % 100 + 1;
     return order;
 }
-
-// Terminal-based interactivity with the order engine
+/*
+// Terminal-based interactivity with the order engine -- OLD
 void placeOrder(OrderBook& orderBook, int& nextOrderId) {
     Order order;
     order.id = nextOrderId++;
@@ -153,8 +155,7 @@ void placeOrder(OrderBook& orderBook, int& nextOrderId) {
 
     orderBook.addOrder(order);
 }
-
-// Background random order generator - trigger:
+*/
 void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(15));
@@ -166,13 +167,99 @@ void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
     }
 }
 
+// CHange to act like a server:
+void HandleClient(Orderbook& orderBook, int clientSocket) {
+    int nextOrderId = 1;
+    char buffer[256];
+    while (true) {
+        std::memset(buffer, 0, 256);
+        int bytesReceived = recv(clientSocket, buffer, 255, 0);
+        if (bytesRecieved <= 0){
+            std::cout << "Client disconnected. \n";
+            break;
+        }
+
+        // Assume format is: <side> <price> <quantity>
+        int side;
+        double price;
+        sscanf(buffer, "%d %lf %d", &side, &price, &quantity); // feed in order
+        if (side.std::is_empty() || price.std::is_empty() || quantity.std::is_empty()){
+            std::string invalidOrder = "Invalid Order Format. Please Try Again.\n"; // failure message
+            send(clientSocket, invalidOrder.c_str(), invalidOrder.size(), 0);
+        }
+
+        Order order = { nextOrderId++, OrderType::Limit, side == 0 ? Side::Buy : Side::Sell};
+        orderBook.addOrder(order);
+
+        std::string confirmation = "Order added: "+ std::string(buffer) + "\n"; // repeat order back
+        send(clientSocket, confirmation.c_str(), confirmation.size(), 0);
+    }
+    close(clientSocket); // if broken out of
+}
+
+// server mgmt:
+void startServer(OrderBook& orderBook){
+    int serverSocket = socket(AD_INET, SOCK_STREAM, 0);
+    if (serverSocket == -1){
+        std::cerr << "Cannot create socket\n";
+        exit(EXIT_FAILURE);
+    }
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(54000);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) { // error handling
+        std::cerr << "Cannot bind socket\n";
+        close(serverSocekt);
+        exit(EXIT_FAILURE);
+    }
+
+    std::cout << "Server started. Waiting for connections...\n";
+
+    while (true) {
+        sockaddr_in clientAddr;
+        socklen_t clientSize = sizeof(clientAddr);
+        int clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientSize);
+        if (clientSocket == -1) {
+            std::cerr << "Cannot accept connection\n";
+            continue;
+        }
+
+        std::cout << "Client connected.\n";
+        std::thread(handleClient, std::ref(orderBook), clientSocket).detach();
+    }
+}
+
+// Initial client-server setup:
+int main() {
+    srand(static_cast<unsigned int>(time(0)));
+    OrderBook orderBook;
+    int nextOrderId = 1;
+
+    // Start background thread to generate random orders
+    std::thread orderGenerator(generateOrdersPeriodically, std::ref(orderBook), std::ref(nextOrderId));
+
+    // Start server to handle client connections
+    std::thread serverThread(startServer, std::ref(orderBook));
+
+    orderGenerator.join();
+    serverThread.join();
+
+    return 0;
+}
+
+
+
+
+/*
 // Current (temporary) way of interacting with the engine -- FIXME
 int main() {
     srand(static_cast<unsigned int>(time(0)));
     OrderBook orderBook;
     int nextOrderId = 1;
 
-    // Start background thread for random order generation:
+    // Start background thread to generate random orders
     std::thread orderGenerator(generateOrdersPeriodically, std::ref(orderBook), std::ref(nextOrderId));
 
     int choice;
@@ -202,8 +289,10 @@ int main() {
         }
     } while (choice != 3);
 
-    // Simplified order generator shut down:
+    // Signal the order generator to stop (this is a simplified approach)
+    // For real applications, you should use proper shutdown mechanisms
     orderGenerator.detach();
 
     return 0;
 }
+*/

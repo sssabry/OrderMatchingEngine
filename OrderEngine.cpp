@@ -15,8 +15,6 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
-
-
 enum class OrderType {Market, Limit}; 
 enum class Side {Buy, Sell};
 
@@ -179,7 +177,7 @@ void handleClient(OrderBook& orderBook, SOCKET clientSocket) {
         std::memset(buffer, 0, 256);
         int bytesReceived = recv(clientSocket, buffer, 255, 0);
         if (bytesReceived <= 0) {
-            std::cout << "Client disconnected.\n";
+            std::cout << "Client disconnected or error occurred.\n";
             break;
         }
 
@@ -214,7 +212,7 @@ void startServer(OrderBook& orderBook) {
 
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(54000);
+    serverAddr.sin_port = htons(60000);
     serverAddr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {

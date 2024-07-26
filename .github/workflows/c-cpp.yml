@@ -8,16 +8,27 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-latest  
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up CMake
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Visual Studio
+      uses: microsoft/setup-msbuild@v1
       with:
-        cmake-version: '3.26.2' # Specify the version of CMake you need
+        vs-version: 'latest'  
+
+    - name: Install CMake
+      uses: cmake/cmake-action@v2
+      with:
+        cmake-version: '3.22.1' 
+
     - name: Configure CMake
-      run: cmake -S . -B build -G "Visual Studio 17 2022"
-    - name: Build
-      run: cmake --build build --config Release
-    - name: Run Tests
-      run: ctest --output-on-failure --test-dir build
+      run: cmake -S . -B build
+
+    - name: Build with CMake
+      run: cmake --build build --config Release  
+
+    - name: Run tests
+      run: ctest --test-dir build --config Debug  

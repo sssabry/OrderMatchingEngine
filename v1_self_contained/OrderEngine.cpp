@@ -15,8 +15,8 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
-enum class OrderType {Market, Limit};
-enum class Side {Buy, Sell};
+enum class OrderType { Market, Limit };
+enum class Side { Buy, Sell };
 
 struct Order {
     int id;
@@ -31,19 +31,26 @@ public:
     void addOrder(const Order& order);
     void matchOrders();
     void printOrderBook() const;
-    void waitForAllOrders(); 
-    
-private:
+    void waitForAllOrders();
+    void broadcastToClients(const std::string& message);
+    void addClient(SOCKET clientSocket); // Add client to the list
+    void removeClient(SOCKET clientSocket); // Remove client from the list
 
+private:
     // Queues of orders at each price:
-    std::map<double, std::queue<Order>> buyOrdersMap; 
+    std::map<double, std::queue<Order>> buyOrdersMap;
     std::map<double, std::queue<Order>> sellOrdersMap;
+
     // Thread safety:
     mutable std::mutex buyOrdersMutex;
     mutable std::mutex sellOrdersMutex;
+    mutable std::mutex clientsMutex;
+
     // Holder for async tasks:
-    std::vector<std::future<void>> matchOrdersFutures; 
-    std::mutex printMutex;
+    std::vector<std::future<void>> matchOrdersFutures;
+
+    // List of client sockets:
+    std::vector<SOCKET> clients;
 };
 
 void OrderBook::addOrder(const Order& order) {
@@ -55,12 +62,11 @@ void OrderBook::addOrder(const Order& order) {
         sellOrdersMap[order.price].push(order);
     }
 
-    // Parallel/async call to matchOrders (non-blocking for multiple clients)
-    matchOrdersFutures.push_back(std::async(std::launch::async, [this]() {matchOrders();}));
+    // Parallel call to matchOrders: (non-blocking execution)
+    matchOrders();
 }
 
 void OrderBook::matchOrders() {
-    // Temporary lock, freeze the book:
     std::lock_guard<std::mutex> buyLock(buyOrdersMutex);
     std::lock_guard<std::mutex> sellLock(sellOrdersMutex);
 
@@ -68,23 +74,19 @@ void OrderBook::matchOrders() {
         auto bestBuy = buyOrdersMap.rbegin(); // highest buy price (get last element using reverse begin iteration)
         auto bestSell = sellOrdersMap.begin(); // lowest sell price
 
-        if (bestBuy->first >= bestSell->first) { // get first compoent of pair (AKA price)
+        if (bestBuy->first >= bestSell->first) { // get first component of pair (AKA price)
 
-            // Second component -> the queues at this price
             auto& buyQueue = bestBuy->second;
             auto& sellQueue = bestSell->second;
 
-            // Temp holds of current fronts of each queue:
             Order& currentBuy = buyQueue.front();
             Order& currentSell = sellQueue.front();
 
-            int matchedQuantity = std::min(currentBuy.quantity, currentSell.quantity);
-            
-            // Log order matching details for server tracking
-            {
-                std::lock_guard<std::mutex> printLock(printMutex);
-                std::cout << "Orders Matched: " << matchedQuantity << " @ " << bestSell->first << "\n";
-            }
+            int matchedQuantity = (currentBuy.quantity < currentSell.quantity) ? currentBuy.quantity : currentSell.quantity;
+
+            std::string matchMessage = "Orders Matched: " + std::to_string(matchedQuantity) + " @ " + std::to_string(bestSell->first) + "\n";
+            std::cout << matchMessage;
+            broadcastToClients(matchMessage);
 
             currentBuy.quantity -= matchedQuantity;
             currentSell.quantity -= matchedQuantity;
@@ -108,7 +110,6 @@ void OrderBook::matchOrders() {
 }
 
 void OrderBook::printOrderBook() const {
-    // Freeze book:
     std::lock_guard<std::mutex> buyLock(buyOrdersMutex);
     std::lock_guard<std::mutex> sellLock(sellOrdersMutex);
 
@@ -124,7 +125,7 @@ void OrderBook::printOrderBook() const {
 }
 
 void OrderBook::waitForAllOrders() {
-    for (auto& future : matchOrdersFutures) { // for each future
+    for (auto& future : matchOrdersFutures) {
         if (future.valid()) {
             future.get();
         }
@@ -132,20 +133,38 @@ void OrderBook::waitForAllOrders() {
     matchOrdersFutures.clear();
 }
 
-Order generateRandomOrder(int id) {
+void OrderBook::broadcastToClients(const std::string& message) {
+    std::lock_guard<std::mutex> lock(clientsMutex);
+
+    for (SOCKET clientSocket : clients) {
+        send(clientSocket, message.c_str(), message.size(), 0);
+    }
+}
+
+void OrderBook::addClient(SOCKET clientSocket) {
+    std::lock_guard<std::mutex> lock(clientsMutex);
+    clients.push_back(clientSocket);
+}
+
+void OrderBook::removeClient(SOCKET clientSocket) {
+    std::lock_guard<std::mutex> lock(clientsMutex);
+    clients.erase(std::remove(clients.begin(), clients.end(), clientSocket), clients.end());
+}
+
+Order generateRealisticOrder(int id) {
     Order order;
     order.id = id;
     order.type = OrderType::Limit;
     order.side = (rand() % 2 == 0) ? Side::Buy : Side::Sell;
-    order.price = 100.0 + static_cast<double>(rand() % 2000) / 10.0;
-    order.quantity = rand() % 100 + 1;
+    order.price = 100.0 + static_cast<double>(rand() % 1900) / 10.0;
+    order.quantity = rand() % 1000 + 1;
     return order;
 }
 
 void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
     while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(10));
-        Order randomOrder = generateRandomOrder(nextOrderId++);
+        std::this_thread::sleep_for(std::chrono::seconds(15));
+        Order randomOrder = generateRealisticOrder(nextOrderId++);
         orderBook.addOrder(randomOrder);
         std::cout << "\n Random Order Added: "
                   << (randomOrder.side == Side::Buy ? "Buy" : "Sell")
@@ -153,13 +172,12 @@ void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
     }
 }
 
-// CHange to act like a server:
 void handleClient(OrderBook& orderBook, SOCKET clientSocket) {
     int nextOrderId = 1;
     char buffer[256];
     while (true) {
-        std::memset(buffer, 0, sizeof(buffer));
-        int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        std::memset(buffer, 0, 256);
+        int bytesReceived = recv(clientSocket, buffer, 255, 0);
         if (bytesReceived <= 0) {
             std::cout << "Client disconnected or error occurred.\n";
             break;
@@ -168,11 +186,7 @@ void handleClient(OrderBook& orderBook, SOCKET clientSocket) {
         int side;
         double price;
         int quantity;
-        if (sscanf(buffer, "%d %lf %d", &side, &price, &quantity) != 3) {
-            std::string errorMsg = "Invalid order format.\n";
-            send(clientSocket, errorMsg.c_str(), errorMsg.size(), 0);
-            continue;
-        }
+        sscanf(buffer, "%d %lf %d", &side, &price, &quantity);
 
         Order order = { nextOrderId++, OrderType::Limit, side == 0 ? Side::Buy : Side::Sell, price, quantity };
         orderBook.addOrder(order);
@@ -180,6 +194,10 @@ void handleClient(OrderBook& orderBook, SOCKET clientSocket) {
         std::string confirmation = "Order added: " + std::string(buffer) + "\n";
         send(clientSocket, confirmation.c_str(), confirmation.size(), 0);
     }
+
+    // Remove client from the list of clients:
+    orderBook.removeClient(clientSocket);
+
     closesocket(clientSocket);
 }
 
@@ -229,6 +247,10 @@ void startServer(OrderBook& orderBook) {
         }
 
         std::cout << "Client connected.\n";
+
+        // Add client to the list:
+        orderBook.addClient(clientSocket);
+
         std::thread(handleClient, std::ref(orderBook), clientSocket).detach();
     }
 

@@ -22,17 +22,23 @@ def send_order(order):
     except Exception as e:
         return f"Unexpected error: {e}"
 
-# Function to receive updates from the server
 def receive_updates(update_callback):
     try:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_socket.connect(('127.0.0.1', 60000))
+        client_socket.setblocking(False)  # Non-blocking mode for the socket
 
         while True:
-            data = client_socket.recv(4096)
-            if data:
-                update_callback(data.decode())
-            else:
+            try:
+                data = client_socket.recv(4096)
+                if data:
+                    update_callback(data.decode())
+                else:
+                    break
+            except BlockingIOError:
+                continue  
+            except Exception as e:
+                update_callback(f"Error: {e}")
                 break
 
         client_socket.close()
@@ -45,13 +51,12 @@ def receive_updates(update_callback):
     except Exception as e:
         update_callback(f"Unexpected error: {e}")
 
-# Main application class for the GUI
 class OrderBookClient(tk.Tk):
     def __init__(self):
         super().__init__()
 
         self.title("Order Book Client")
-        self.geometry("400x300")
+        self.geometry("600x500")
 
         # Inputs
         self.side_label = tk.Label(self, text="Enter side (0 for Buy, 1 for Sell):")
@@ -75,18 +80,15 @@ class OrderBookClient(tk.Tk):
         self.result_label = tk.Label(self, text="")
         self.result_label.pack(pady=5)
 
-        # Live feed
         self.feed_label = tk.Label(self, text="Live Feed:")
         self.feed_label.pack(pady=5)
         self.feed_text = tk.Text(self, height=10, width=50)
         self.feed_text.pack(pady=5)
 
-        # Start receiving updates in a separate thread
         self.update_thread = Thread(target=receive_updates, args=(self.update_feed,))
         self.update_thread.daemon = True
         self.update_thread.start()
 
-    # Submit the order and display server response
     def submit_order(self):
         side = self.side_entry.get()
         price = self.price_entry.get()
@@ -100,7 +102,6 @@ class OrderBookClient(tk.Tk):
         response = send_order(order)
         self.result_label.config(text=f"Server response: {response}")
 
-    # Update the live feed with new messages
     def update_feed(self, message):
         self.feed_text.insert(tk.END, message + "\n")
         self.feed_text.yview(tk.END) 

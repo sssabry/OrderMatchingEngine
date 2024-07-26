@@ -43,6 +43,7 @@ private:
     mutable std::mutex sellOrdersMutex;
     // Holder for async tasks:
     std::vector<std::future<void>> matchOrdersFutures; 
+    std::mutex printMutex;
 };
 
 void OrderBook::addOrder(const Order& order) {
@@ -54,7 +55,7 @@ void OrderBook::addOrder(const Order& order) {
         sellOrdersMap[order.price].push(order);
     }
 
-    // Parallel call to matchOrders (non-blocking for multiple clients)
+    // Parallel/async call to matchOrders (non-blocking for multiple clients)
     matchOrdersFutures.push_back(std::async(std::launch::async, [this]() {matchOrders();}));
 }
 
@@ -78,8 +79,12 @@ void OrderBook::matchOrders() {
             Order& currentSell = sellQueue.front();
 
             int matchedQuantity = std::min(currentBuy.quantity, currentSell.quantity);
-
-            std::cout << "Orders Matched: " << matchedQuantity << " @ " << bestSell->first << "\n";
+            
+            // Log order matching details for server tracking
+            {
+                std::lock_guard<std::mutex> printLock(printMutex);
+                std::cout << "Orders Matched: " << matchedQuantity << " @ " << bestSell->first << "\n";
+            }
 
             currentBuy.quantity -= matchedQuantity;
             currentSell.quantity -= matchedQuantity;
@@ -139,7 +144,7 @@ Order generateRandomOrder(int id) {
 
 void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
     while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(15));
+        std::this_thread::sleep_for(std::chrono::seconds(10));
         Order randomOrder = generateRandomOrder(nextOrderId++);
         orderBook.addOrder(randomOrder);
         std::cout << "\n Random Order Added: "

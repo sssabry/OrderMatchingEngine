@@ -13,7 +13,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up CMake
-      uses: cmake/llvm-action@v1
       with:
         cmake-version: '3.26.2' # Specify the version of CMake you need
     - name: Configure CMake

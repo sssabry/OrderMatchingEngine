@@ -15,7 +15,7 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
-enum class OrderType {Market, Limit}; 
+enum class OrderType {Market, Limit};
 enum class Side {Buy, Sell};
 
 struct Order {
@@ -54,8 +54,8 @@ void OrderBook::addOrder(const Order& order) {
         sellOrdersMap[order.price].push(order);
     }
 
-    // Parallel call to matchOrders: (non-blocking execution)
-    matchOrders();
+    // Parallel call to matchOrders (non-blocking for multiple clients)
+    matchOrdersFutures.push_back(std::async(std::launch::async, [this]() {matchOrders();}));
 }
 
 void OrderBook::matchOrders() {
@@ -77,8 +77,7 @@ void OrderBook::matchOrders() {
             Order& currentBuy = buyQueue.front();
             Order& currentSell = sellQueue.front();
 
-            // Minimum overlapping quantity:
-            int matchedQuantity = (currentBuy.quantity < currentSell.quantity) ? currentBuy.quantity : currentSell.quantity;
+            int matchedQuantity = std::min(currentBuy.quantity, currentSell.quantity);
 
             std::cout << "Orders Matched: " << matchedQuantity << " @ " << bestSell->first << "\n";
 
@@ -125,7 +124,7 @@ void OrderBook::waitForAllOrders() {
             future.get();
         }
     }
-    matchOrdersFutures.clear(); 
+    matchOrdersFutures.clear();
 }
 
 Order generateRandomOrder(int id) {
@@ -133,31 +132,11 @@ Order generateRandomOrder(int id) {
     order.id = id;
     order.type = OrderType::Limit;
     order.side = (rand() % 2 == 0) ? Side::Buy : Side::Sell;
-    order.price = 100.0 + static_cast<double>(rand() % 2000) /10.0;
+    order.price = 100.0 + static_cast<double>(rand() % 2000) / 10.0;
     order.quantity = rand() % 100 + 1;
     return order;
 }
-/*
-// Terminal-based interactivity with the order engine -- OLD
-void placeOrder(OrderBook& orderBook, int& nextOrderId) {
-    Order order;
-    order.id = nextOrderId++;
-    order.type = OrderType::Limit;
 
-    int side;
-    std::cout << "Enter side (0 for Buy, 1 for Sell): ";
-    std::cin >> side;
-    order.side = (side == 0) ? Side::Buy : Side::Sell;
-
-    std::cout << "Enter price: ";
-    std::cin >> order.price;
-
-    std::cout << "Enter quantity: ";
-    std::cin >> order.quantity;
-
-    orderBook.addOrder(order);
-}
-*/
 void generateOrdersPeriodically(OrderBook& orderBook, int& nextOrderId) {
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(15));
@@ -174,8 +153,8 @@ void handleClient(OrderBook& orderBook, SOCKET clientSocket) {
     int nextOrderId = 1;
     char buffer[256];
     while (true) {
-        std::memset(buffer, 0, 256);
-        int bytesReceived = recv(clientSocket, buffer, 255, 0);
+        std::memset(buffer, 0, sizeof(buffer));
+        int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
         if (bytesReceived <= 0) {
             std::cout << "Client disconnected or error occurred.\n";
             break;
@@ -184,7 +163,11 @@ void handleClient(OrderBook& orderBook, SOCKET clientSocket) {
         int side;
         double price;
         int quantity;
-        sscanf(buffer, "%d %lf %d", &side, &price, &quantity);
+        if (sscanf(buffer, "%d %lf %d", &side, &price, &quantity) != 3) {
+            std::string errorMsg = "Invalid order format.\n";
+            send(clientSocket, errorMsg.c_str(), errorMsg.size(), 0);
+            continue;
+        }
 
         Order order = { nextOrderId++, OrderType::Limit, side == 0 ? Side::Buy : Side::Sell, price, quantity };
         orderBook.addOrder(order);
@@ -261,48 +244,3 @@ int main() {
 
     return 0;
 }
-
-/*
-// Current (temporary) way of interacting with the engine -- FIXME
-int main() {
-    srand(static_cast<unsigned int>(time(0)));
-    OrderBook orderBook;
-    int nextOrderId = 1;
-
-    // Start background thread to generate random orders
-    std::thread orderGenerator(generateOrdersPeriodically, std::ref(orderBook), std::ref(nextOrderId));
-
-    int choice;
-    do {
-        std::cout << "\nMenu:\n";
-        std::cout << "1. Place Order\n";
-        std::cout << "2. Print Order Book\n";
-        std::cout << "3. Exit\n";
-        std::cout << "Enter your choice: ";
-        std::cin >> choice;
-
-        switch (choice) {
-            case 1:
-                placeOrder(orderBook, nextOrderId);
-                break;
-            case 2:
-                orderBook.waitForAllOrders();
-                orderBook.printOrderBook();
-                break;
-            case 3:
-                std::cout << "Exiting...\n";
-                orderBook.waitForAllOrders();
-                break;
-            default:
-                std::cout << "Invalid choice, please try again.\n";
-                break;
-        }
-    } while (choice != 3);
-
-    // Signal the order generator to stop (this is a simplified approach)
-    // For real applications, you should use proper shutdown mechanisms
-    orderGenerator.detach();
-
-    return 0;
-}
-*/

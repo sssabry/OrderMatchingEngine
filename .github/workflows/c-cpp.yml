@@ -20,7 +20,7 @@ jobs:
         vs-version: 'latest'
 
     - name: Install CMake
-      uses: cmake/cmake-action@v2
+      uses: cschleiden/setup-cmake@v1
       with:
         cmake-version: '3.22.1'
 

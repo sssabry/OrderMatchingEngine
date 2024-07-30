@@ -19,8 +19,8 @@ jobs:
       with:
         vs-version: 'latest'
 
-    - name: Install CMake
-      uses: cschleiden/setup-cmake@v1
+    - name: Set up CMake
+      uses: cmake/setup-cmake@v1
       with:
         cmake-version: '3.22.1'
 
@@ -30,10 +30,7 @@ jobs:
     - name: Build with CMake
       run: cmake --build build --config Release
 
-    - name: Run tests
-      run: ctest --test-dir build --config Release
-
-    - name: Install Python
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.x'

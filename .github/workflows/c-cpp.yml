@@ -40,4 +40,4 @@ jobs:
 
     - name: Run Python client
       run: |
-        python client.py
+        python clients/client.py

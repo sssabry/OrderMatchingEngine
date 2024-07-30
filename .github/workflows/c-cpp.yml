@@ -19,10 +19,13 @@ jobs:
       with:
         vs-version: 'latest'
 
-    - name: Set up CMake
-      uses: cmake/setup-cmake@v1
-      with:
-        cmake-version: '3.22.1'
+    - name: Install CMake
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Invoke-WebRequest -Uri https://github.com/Kitware/CMake/releases/download/v3.22.1/cmake-3.22.1-windows-x86_64.msi -OutFile cmake-installer.msi
+        Start-Process msiexec.exe -ArgumentList '/i', 'cmake-installer.msi', '/quiet', '/norestart' -NoNewWindow -Wait
+        Remove-Item -Force cmake-installer.msi
+        cmake --version
 
     - name: Configure CMake
       run: cmake -S . -B build

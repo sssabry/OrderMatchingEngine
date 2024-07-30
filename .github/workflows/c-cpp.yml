@@ -38,6 +38,16 @@ jobs:
       with:
         python-version: '3.x'
 
-    - name: Run Python client
+    - name: Run Python client with timeout
       run: |
-        python clients/client.py
+        Start-Process python -ArgumentList "clients/client.py" -NoNewWindow -Wait -Timeout 60 -RedirectStandardOutput client_output.log -RedirectStandardError client_output.log
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+      shell: pwsh
+
+    - name: Run Build Verification Test
+      run: |
+        python tests/test_build.py
+
+    - name: Run Client-Server Communication Test
+      run: |
+        python tests/test_client_server.py
